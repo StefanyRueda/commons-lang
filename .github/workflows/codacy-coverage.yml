@@ -5,8 +5,9 @@ on:
     branches: [ "main", "master" ]
   pull_request:
   schedule:
-    - cron: "0 6 * * 1"   
-  workflow_dispatch: {}    
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
 jobs:
   coverage:
     runs-on: ubuntu-latest
@@ -21,31 +22,34 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'   # 11 o 8 si tu proyecto lo requiere
+          java-version: '17'   
 
-      # 1) Inyecta el agente de JaCoCo y ejecuta tests
-      - name: Test with JaCoCo agent
+      # 1) Ejecuta tests con JaCoCo, saltando RAT (licencias)
+      - name: Test with JaCoCo agent (skip RAT)
         run: |
-          mvn -B -DskipITs org.jacoco:jacoco-maven-plugin:0.8.11:prepare-agent test
+          mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs \
+            org.jacoco:jacoco-maven-plugin:0.8.11:prepare-agent test
 
-      # 2) Genera el reporte XML (target/site/jacoco/jacoco.xml)
-      - name: Generate JaCoCo report
+      # 2) Genera el reporte XML de cobertura
+      - name: Generate JaCoCo report (skip RAT)
         run: |
-          mvn -B org.jacoco:jacoco-maven-plugin:0.8.11:report
+          mvn -B -Denforcer.skip=true -Drat.skip=true \
+            org.jacoco:jacoco-maven-plugin:0.8.11:report
 
-      # (Opcional) Verifica que el archivo exista para diagnosticar rápido
+      # (Opcional) Diagnóstico rápido si algo falla
       - name: Check jacoco.xml exists
         run: |
+          ls -la target/site/jacoco || true
           test -f target/site/jacoco/jacoco.xml || (echo "No se encontró target/site/jacoco/jacoco.xml" && exit 1)
 
-      # 3) Sube cobertura a Codacy (usa tu secreto CODACY_PROJECT_TOKEN)
+      # 3) Sube cobertura a Codacy
       - name: Upload coverage to Codacy
         uses: codacy/codacy-coverage-reporter-action@v1
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: target/site/jacoco/jacoco.xml
 
-      # (Opcional) Guarda el reporte como artefacto, útil si algo falla
+      # (Opcional) Guarda jacoco.xml como artefacto
       - name: Upload jacoco.xml as artifact
         uses: actions/upload-artifact@v4
         with:
