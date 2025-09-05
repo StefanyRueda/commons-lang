@@ -18,7 +18,7 @@ on:
     branches: [ "master", "main" ]
   pull_request:
   schedule:
-    - cron: "0 7 * * 1"    # semanal (Lunes 07:00 UTC)
+    - cron: "0 7 * * 1"
   workflow_dispatch: {}
 
 jobs:
@@ -57,12 +57,10 @@ jobs:
             exit 1
           fi
 
-      # Ejecuta tests y genera cobertura JaCoCo (saltamos RAT para evitar fallos por licencias de YAMLs)
+      # Tests + cobertura; saltamos RAT para que no falle por licencias en YAMLs
       - name: Test + JaCoCo (skip RAT)
-        run: |
-          mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs clean test jacoco:report
+        run: mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs clean test jacoco:report
 
-      # Verifica que el jacoco.xml existe; reintenta generar y muestra diagnóstico si no aparece
       - name: Check jacoco.xml
         run: |
           if [ ! -f target/site/jacoco/jacoco.xml ]; then
@@ -70,29 +68,41 @@ jobs:
             mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs jacoco:report || true
           fi
           if [ ! -f target/site/jacoco/jacoco.xml ]; then
-            echo "❌ Sigue faltando jacoco.xml. Contenido de target/site/jacoco:"
+            echo "❌ Sigue faltando jacoco.xml. (Si fuera multi-módulo, usa report-aggregate.)"
             ls -la target/site/jacoco || true
-            echo "Consejos: verifica que existan tests; si el proyecto fuese multi-módulo, usa report-aggregate."
             exit 1
           fi
 
-      # Instala Qlty CLI con la acción oficial (evita problemas de DNS con curl)
+      # Instala Qlty CLI con la acción oficial (evita curl/DNS)
       - name: Install Qlty CLI
         uses: qltysh/qlty-action/install@v2
 
       - name: Mostrar versión de Qlty
         run: qlty --version
 
-      # Análisis de métricas (smells, duplicación, complejidad).
-      # Importante: no combines '--all' con rutas; usa o '--all' o '.'.
+      # 🔧 Crea config si no existe (evita el error “No qlty config file found”)
+      - name: Ensure Qlty config (.qlty/qlty.toml)
+        run: |
+          if [ ! -f .qlty/qlty.toml ]; then
+            echo "No existe .qlty/qlty.toml → ejecutando 'qlty init --yes'"
+            qlty init --yes
+          else
+            echo "Encontrado .qlty/qlty.toml"
+          fi
+
+      # Valida la config por si hay errores de sintaxis
+      - name: Validate Qlty config
+        run: qlty config validate
+
+      # Métricas (smells/duplicación/complexidad): usa --all (sin ruta)
       - name: Run Qlty analysis
         run: qlty metrics --all
 
-      # Publica cobertura JaCoCo en Qlty Cloud
+      # Publicar cobertura JaCoCo en Qlty Cloud
       - name: Publish coverage to Qlty
         run: qlty coverage publish target/site/jacoco/jacoco.xml --format jacoco
 
-      # Artefacto para depuración (opcional)
+      # Artefacto útil para depurar
       - name: Subir jacoco.xml como artefacto
         if: always()
         uses: actions/upload-artifact@v4
@@ -100,12 +110,14 @@ jobs:
           name: jacoco-xml
           path: target/site/jacoco/jacoco.xml
 
-      # Bloque de diagnóstico si algo falla (no revienta por 'cat' inexistentes)
+      # Debug seguro si algo falla
       - name: Debug en caso de fallo
         if: failure()
         run: |
           echo "PATH=$PATH"
           which qlty || true
+          echo "Contenido de .qlty:"
+          ls -la .qlty || true
           echo "Contenido de target/site/jacoco:"
           ls -la target/site/jacoco || true
           echo "Contenido de target/surefire-reports:"
