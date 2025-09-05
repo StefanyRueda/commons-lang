@@ -20,18 +20,34 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Ejecuta tests y genera jacoco.xml, saltando RAT (licencias)
+      # Tests + cobertura (saltamos RAT de licencias)
       - name: Test + JaCoCo (skip RAT)
         run: mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs clean test jacoco:report
 
-      # Instala CLI de Qlty
+      # Instala Qlty CLI en $HOME/.qlty/bin y lo agrega al PATH
       - name: Install Qlty CLI
-        run: curl -fsSL https://get.qlty.sh | bash
+        run: |
+          mkdir -p "$HOME/.qlty/bin"
+          curl -fsSL https://get.qlty.sh | bash -s -- -b "$HOME/.qlty/bin"
+          echo "$HOME/.qlty/bin" >> "$GITHUB_PATH"
+          qlty --version
 
-      # Análisis (smells/duplicación/complexity)
+      # (Opcional) si quieres ver dónde quedó el binario
+      - name: Check Qlty location
+        run: which qlty
+
+      # Análisis (smells / duplicación / complejidad)
       - name: Run Qlty analysis
-        run: ~/.qlty/bin/qlty metrics --all .
+        run: qlty metrics --all .
 
-      # Publicar cobertura JaCoCo en Qlty Cloud
+      # Publica cobertura JaCoCo en Qlty Cloud
       - name: Publish coverage to Qlty
-        run: ~/.qlty/bin/qlty coverage publish target/site/jacoco/jacoco.xml --format jacoco
+        run: qlty coverage publish target/site/jacoco/jacoco.xml --format jacoco
+
+      # Diagnóstico si algo falla
+      - name: Debug paths on failure
+        if: failure()
+        run: |
+          echo "PATH=$PATH"
+          ls -la "$HOME/.qlty/bin" || true
+          ls -la target/site/jacoco || true
