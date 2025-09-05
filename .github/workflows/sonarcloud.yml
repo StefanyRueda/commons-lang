@@ -34,7 +34,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # Requerido para PR decoration
+          fetch-depth: 0
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -51,11 +51,13 @@ jobs:
 
       - name: Check SONAR_TOKEN
         shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          if [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
-            echo "::error::Missing SONAR_TOKEN secret (Settings → Secrets → Actions)"; exit 1; fi
+          if [ -z "${SONAR_TOKEN:-}" ]; then
+            echo "::error::Missing SONAR_TOKEN secret (Settings → Security → Secrets and variables → Actions)"; exit 1; fi
 
-      # Build + tests + cobertura (saltamos RAT para evitar fallos por licencias en YAMLs)
+      # Build + tests + JaCoCo (saltamos RAT para que no fallen licencias de archivos YAML)
       - name: Build & Test (skip RAT) + JaCoCo
         run: mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs clean verify jacoco:report
 
@@ -74,4 +76,43 @@ jobs:
 
       # En PRs: Quality Gate obligatorio (si falla, falla el job)
       - name: SonarCloud (PRs, gate enforced)
-        if:
+        if: github.event_name == 'pull_request'
+        run: |
+          mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.organization=stefanyrueda \
+            -Dsonar.projectKey=StefanyRueda_commons-lang \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.sources=src/main/java,src/main/resources \
+            -Dsonar.tests=src/test/java \
+            -Dsonar.java.binaries=target/classes \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+
+      # En push/dispatch: no bloquear el pipeline por el Gate (sigue publicando resultados en SonarCloud)
+      - name: SonarCloud (push, non-blocking)
+        if: github.event_name != 'pull_request'
+        run: |
+          mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.organization=stefanyrueda \
+            -Dsonar.projectKey=StefanyRueda_commons-lang \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.sources=src/main/java,src/main/resources \
+            -Dsonar.tests=src/test/java \
+            -Dsonar.java.binaries=target/classes \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.qualitygate.wait=false \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+
+      - name: Upload jacoco.xml artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-xml
+          path: target/site/jacoco/jacoco.xml
+
+      - name: Debug on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "target/site/jacoco:"; ls -la target/site/jacoco || true
