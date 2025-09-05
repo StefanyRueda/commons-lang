@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      MAVEN_OPTS: "-Xmx2g"   # un poco más de memoria por si acaso
 
     steps:
       - name: Checkout
@@ -22,36 +24,34 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'   
+          java-version: '17'
 
-      # 1) Ejecuta tests con JaCoCo, saltando RAT (licencias)
-      - name: Test with JaCoCo agent (skip RAT)
+      # Ejecuta tests SIN tu prepare-agent (JaCoCo lo inyecta el POM del proyecto)
+      - name: Test
         run: |
-          mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs \
-            org.jacoco:jacoco-maven-plugin:0.8.11:prepare-agent test
+          mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs test
 
-      # 2) Genera el reporte XML de cobertura
-      - name: Generate JaCoCo report (skip RAT)
+      # Genera el XML con el plugin del proyecto
+      - name: Generate JaCoCo XML
         run: |
-          mvn -B -Denforcer.skip=true -Drat.skip=true \
-            org.jacoco:jacoco-maven-plugin:0.8.11:report
+          mvn -B -Denforcer.skip=true -Drat.skip=true jacoco:report
 
-      # (Opcional) Diagnóstico rápido si algo falla
-      - name: Check jacoco.xml exists
-        run: |
-          ls -la target/site/jacoco || true
-          test -f target/site/jacoco/jacoco.xml || (echo "No se encontró target/site/jacoco/jacoco.xml" && exit 1)
-
-      # 3) Sube cobertura a Codacy
+      # Subir cobertura a Codacy
       - name: Upload coverage to Codacy
         uses: codacy/codacy-coverage-reporter-action@v1
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: target/site/jacoco/jacoco.xml
 
-      # (Opcional) Guarda jacoco.xml como artefacto
-      - name: Upload jacoco.xml as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: jacoco-xml
-          path: target/site/jacoco/jacoco.xml
+      # Diagnóstico si algo falla: imprime los reportes de surefire
+      - name: Dump surefire reports on failure
+        if: failure()
+        run: |
+          echo "==== surefire-reports ===="
+          ls -la target/surefire-reports || true
+          for f in target/surefire-reports/*.txt; do
+            echo "---- $f ----"; cat "$f"; echo; 
+          done
+          for f in target/surefire-reports/*.dump*; do
+            echo "---- $f ----"; cat "$f"; echo; 
+          done
