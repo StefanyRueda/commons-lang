@@ -1,109 +1,64 @@
-# Licensed to the Apache Software Foundation (ASF) under one or more
-# contributor license agreements.  See the NOTICE file distributed with
-# this work for additional information regarding copyright ownership.
-# The ASF licenses this file to You under the Apache License, Version 2.0
-# (the "License"); you may not use this file except in compliance with
-# the License.  You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-name: qlty
-
-on:
-  push:
-    branches: [ "master", "main" ]
-  pull_request:
-  schedule:
-    - cron: "0 7 * * 1"   # semanal
-  workflow_dispatch: {}
-
 jobs:
   qlty:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: read
+    permissions: { contents: read }
     env:
       QLTY_AUTH_TOKEN: ${{ secrets.QLTY_AUTH_TOKEN }}
       MAVEN_OPTS: "-Xmx2g"
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Cache Maven repo
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.m2/repository
           key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-m2-
 
-      - name: Fail fast si falta QLTY_AUTH_TOKEN
+      - name: Fail fast: tokens de Qlty
+        env:
+          QLTY_COVERAGE_TOKEN: ${{ secrets.QLTY_COVERAGE_TOKEN }}
         run: |
-          if [ -z "${QLTY_AUTH_TOKEN}" ]; then
-            echo "❌ Falta el secreto QLTY_AUTH_TOKEN en Settings → Security → Secrets and variables → Actions"
-            exit 1
-          fi
+          [ -n "${QLTY_AUTH_TOKEN}" ] || { echo "❌ Falta QLTY_AUTH_TOKEN"; exit 1; }
+          [ -n "${QLTY_COVERAGE_TOKEN}" ] || { echo "❌ Falta QLTY_COVERAGE_TOKEN"; exit 1; }
 
-      # Tests + cobertura; saltamos RAT para que no fallen YAMLs por licencias
       - name: Test + JaCoCo (skip RAT)
         run: mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs clean test jacoco:report
 
       - name: Check jacoco.xml
         run: |
           if [ ! -f target/site/jacoco/jacoco.xml ]; then
-            echo "⚠️ No se encontró target/site/jacoco/jacoco.xml; intentando regenerar..."
+            echo "⚠️ Reintentando jacoco:report..."
             mvn -B -Denforcer.skip=true -Drat.skip=true -DskipITs jacoco:report || true
           fi
-          if [ ! -f target/site/jacoco/jacoco.xml ]; then
-            echo "❌ Sigue faltando jacoco.xml. (Si fuera multi-módulo, usa report-aggregate.)"
-            ls -la target/site/jacoco || true
-            exit 1
-          fi
+          test -f target/site/jacoco/jacoco.xml || { ls -la target/site/jacoco || true; exit 1; }
 
-      # Instala Qlty CLI con la acción oficial (sin curl/DNS)
       - name: Install Qlty CLI
         uses: qltysh/qlty-action/install@v2
 
-      - name: Mostrar versión de Qlty
+      - name: qlty --version
         run: qlty --version
 
-      # Crea config si no existe. Ojo: 'qlty init' ejecuta un 'check' de muestra y puede devolver ≠ 0,
-      # por eso marcamos el paso como tolerante con '|| true' para no romper el pipeline.
       - name: Ensure Qlty config (.qlty/qlty.toml)
         run: |
-          if [ ! -f .qlty/qlty.toml ]; then
-            echo "No existe .qlty/qlty.toml → ejecutando 'qlty init --yes' (tolerante a errores)"
-            qlty init --yes || true
-          else
-            echo "Encontrado .qlty/qlty.toml"
-          fi
+          [ -f .qlty/qlty.toml ] || { echo "init (tolerante)"; qlty init --yes || true; }
 
-      # (Opcional) Validar la config; no debería fallar, pero no bloqueamos el pipeline si algo menor ocurre
       - name: Validate Qlty config
         run: qlty config validate || true
 
-      # Métricas (smells/duplicación/complexidad): usa --all sin pasar rutas
       - name: Run Qlty analysis
         run: qlty metrics --all
 
-      # Publicar cobertura JaCoCo en Qlty Cloud
+      # ⬇️ Aquí usamos el token por flag (evita depender del entorno)
       - name: Publish coverage to Qlty
-        run: qlty coverage publish target/site/jacoco/jacoco.xml --format jacoco
+        run: qlty coverage publish target/site/jacoco/jacoco.xml --format jacoco --token "${{ secrets.QLTY_COVERAGE_TOKEN }}"
 
-      # Artefacto útil para depurar
       - name: Subir jacoco.xml como artefacto
         if: always()
         uses: actions/upload-artifact@v4
@@ -111,17 +66,13 @@ jobs:
           name: jacoco-xml
           path: target/site/jacoco/jacoco.xml
 
-      # Debug seguro si algo falla
       - name: Debug en caso de fallo
         if: failure()
         run: |
           echo "PATH=$PATH"
           which qlty || true
-          echo "Contenido de .qlty:"
           ls -la .qlty || true
-          echo "Contenido de target/site/jacoco:"
           ls -la target/site/jacoco || true
-          echo "Contenido de target/surefire-reports:"
           if [ -d target/surefire-reports ]; then
             ls -la target/surefire-reports || true
             for f in target/surefire-reports/*; do
