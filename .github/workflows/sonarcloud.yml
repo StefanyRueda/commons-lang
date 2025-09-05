@@ -53,8 +53,8 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.organization=<TU_ORG_KEY>
-            -Dsonar.projectKey=<TU_PROJECT_KEY>
+            -Dsonar.organization=stefanyrueda
+            -Dsonar.projectKey=StefanyRueda_commons-lang
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.java.binaries=target/classes
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
